@@ -180,7 +180,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--whisper_model_size",
         type=str,
         default="medium",
-        help="Whisper model size (e.g. 'medium', 'large-v3'). Passed to whisper.load_model.",
+        help="Whisper model size (e.g. 'medium', 'large-v3'). Ignored when --whisper_model_path is set.",
+    )
+    whisper_grp.add_argument(
+        "--whisper_model_path",
+        type=str,
+        default=None,
+        help="Path to a local Whisper checkpoint (.pt file). When set, skips download and ignores --whisper_model_size.",
     )
 
     diar = ap.add_argument_group("Speaker Diarization (Sortformer)")
@@ -360,6 +366,7 @@ def _build_stages(args: argparse.Namespace, language_filter: list[str] | None) -
             WhisperLangIDStage(
                 tag=whisper_tag,
                 model_size=args.whisper_model_size,
+                model_path=args.whisper_model_path,
                 batch_size=args.langid_batch_size,
                 resources=Resources(gpu_memory_gb=args.langid_gpu_memory_gb),
             )

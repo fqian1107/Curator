@@ -43,8 +43,10 @@ class WhisperLangIDStage(BaseLangIDStage):
     stages.
 
     Args:
-        model_size: Whisper model name passed directly to ``whisper.load_model``
-            (e.g. ``"medium"``, ``"large-v3"``).
+        model_size: Whisper model name passed to ``whisper.load_model`` when no
+            ``model_path`` is given (e.g. ``"medium"``, ``"large-v3"``).
+        model_path: Path to a local Whisper checkpoint (``.pt`` file). When set,
+            this takes precedence over ``model_size`` and no download occurs.
         device: Torch device on which to run the model. ``"auto"`` selects
             CUDA when available and CPU otherwise.
         batch_size: Number of audio samples to process per forward pass.
@@ -56,6 +58,7 @@ class WhisperLangIDStage(BaseLangIDStage):
     tag: str = "tertiary"
     name: str = "WhisperLangID"
     model_size: str = "medium"
+    model_path: str | None = None
     device: str = "auto"
     batch_size: int = 8
     max_duration_sec: float = 30.0  # Whisper's input window is 30 s; base defaults to 10 s
@@ -70,7 +73,8 @@ class WhisperLangIDStage(BaseLangIDStage):
             msg = "OpenAI Whisper is required for WhisperLangIDStage. Install: pip install openai-whisper"
             raise ImportError(msg) from exc
 
-        return whisper.load_model(self.model_size, device=device)
+        name_or_path = self.model_path if self.model_path is not None else self.model_size
+        return whisper.load_model(name_or_path, device=device)
 
     def setup_on_node(
         self,
