@@ -27,14 +27,7 @@ from torch.nn.utils.rnn import pad_sequence
 from nemo_curator.backends.base import NodeInfo, WorkerMetadata
 from nemo_curator.tasks import AudioTask
 
-from nemo_curator.stages.audio.inference.langid_base import BaseLangIDStage
-try:
-    import whisper
-except ImportError as exc:
-    msg = "OpenAI Whisper is required for WhisperLangIDStage. Install: pip install openai-whisper"
-    raise ImportError(msg) from exc
-
-_WHISPER_MAX_SAMPLES = 30 * 16_000  # 30 s at 16 kHz
+from nemo_curator.stages.audio.inference.langid_base import BaseLangIDStage, LangIDResult
 
 
 @dataclass
@@ -45,35 +38,41 @@ class WhisperLangIDStage(BaseLangIDStage):
     to a batched log-Mel spectrogram, and passed to ``detect_language`` without
     running transcription.
 
+    Writes a ``LangIDResult`` tagged ``tertiary`` into ``task.data[lid_key]``,
+    consistent with the SpeechBrain/AmberNet (primary) and Indic Canary (secondary)
+    stages.
+
     Args:
         model_size: Whisper model name passed directly to ``whisper.load_model``
             (e.g. ``"medium"``, ``"large-v3"``).
         device: Torch device on which to run the model. ``"auto"`` selects
             CUDA when available and CPU otherwise.
-        download_root: Optional directory in which OpenAI Whisper caches model
-            checkpoints.
         batch_size: Number of audio samples to process per forward pass.
 
     See :class:`~nemo_curator.stages.audio.inference.langid_base.BaseLangIDStage`
     for the shared waveform/output arguments.
     """
 
+    tag: str = "tertiary"
     name: str = "WhisperLangID"
     model_size: str = "medium"
     device: str = "auto"
-    download_root: str | None = None
-    batch_size: int = 32
+    batch_size: int = 8
+    max_duration_sec: float = 30.0  # Whisper's input window is 30 s; base defaults to 10 s
 
     _model: Any = field(default=None, init=False, repr=False)
     _device: torch.device | None = field(default=None, init=False, repr=False)
 
     def _load_model(self, device: str | torch.device) -> Any:
-        kwargs = {}
-        if self.download_root is not None:
-            kwargs["download_root"] = self.download_root
-        return whisper.load_model(self.model_size, device=device, **kwargs)
+        try:
+            import whisper
+        except ImportError as exc:
+            msg = "OpenAI Whisper is required for WhisperLangIDStage. Install: pip install openai-whisper"
+            raise ImportError(msg) from exc
 
-    def setup_on_node( 
+        return whisper.load_model(self.model_size, device=device)
+
+    def setup_on_node(
         self,
         _node_info: NodeInfo | None = None,
         _worker_metadata: WorkerMetadata | None = None,
@@ -110,6 +109,11 @@ class WhisperLangIDStage(BaseLangIDStage):
             torch.cuda.empty_cache()
 
     def process_batch(self, tasks: list[AudioTask]) -> list[AudioTask]:
+        try:
+            import whisper
+        except ImportError as exc:
+            msg = "OpenAI Whisper is required for WhisperLangIDStage. Install: pip install openai-whisper"
+            raise ImportError(msg) from exc
         if len(tasks) == 0:
             return []
         if self._model is None or self._device is None:
@@ -133,9 +137,9 @@ class WhisperLangIDStage(BaseLangIDStage):
             chunk_signals = audio_signals[chunk_start : chunk_start + self.batch_size]
             chunk_indices = valid_indices[chunk_start : chunk_start + self.batch_size]
 
-            # First pad variable-length rows into [B, T], then pad/trim the whole
-            # batch to Whisper's fixed 30-second window. log_mel_spectrogram
-            # preserves the leading batch dimension and returns [B, n_mels, frames].
+            # Pad variable-length rows into [B, T], then normalize to Whisper's fixed
+            # 30-second window. log_mel_spectrogram preserves the leading batch
+            # dimension and returns [B, n_mels, frames].
             audio_batch = pad_sequence(chunk_signals, batch_first=True, padding_value=0.0)
             audio_batch = whisper.pad_or_trim(audio_batch)
             mel_batch = whisper.log_mel_spectrogram(audio_batch, n_mels=n_mels).to(self._device)
@@ -151,7 +155,11 @@ class WhisperLangIDStage(BaseLangIDStage):
 
             for task_idx, language_probabilities in zip(chunk_indices, probabilities, strict=True):
                 language = max(language_probabilities, key=language_probabilities.get)
-                tasks[task_idx].data[self.output_key] = language
-                tasks[task_idx].data[self.confidence_key] = float(language_probabilities[language])
+                lid_result = LangIDResult(
+                    language=language,
+                    confidence=float(language_probabilities[language]),
+                    tag=self.tag,
+                )
+                tasks[task_idx].data.setdefault(self.lid_key, []).append({self.name: lid_result})
 
         return tasks
