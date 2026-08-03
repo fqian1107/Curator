@@ -100,7 +100,8 @@ class WhisperLangIDStage(BaseLangIDStage):
             device_name = self.device
         self._device = torch.device(device_name)
 
-        logger.info(f"WhisperLangID: loading {self.model_size} on {self._device}")
+        model_desc = self.model_path if self.model_path is not None else self.model_size
+        logger.info(f"WhisperLangID: loading {model_desc} on {self._device}")
         self._model = self._load_model(self._device)
         self._model.eval()
         logger.info("WhisperLangID: model ready")
