@@ -55,7 +55,6 @@ class WhisperLangIDStage(BaseLangIDStage):
     for the shared waveform/output arguments.
     """
 
-    tag: str = "tertiary"
     name: str = "WhisperLangID"
     model_size: str = "medium"
     model_path: str | None = None
